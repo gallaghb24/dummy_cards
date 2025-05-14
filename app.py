@@ -178,12 +178,13 @@ if valid_skus is not None:  # Only show Step 3 if Step 1 is complete
                     # Format currency column
                     filtered_goods_in['Cost'] = filtered_goods_in['Cost'].round(2)
                     
-                    # Create Excel file with all sheets
+                    # ─── Build the Excel file ────────────────────────────────────────────────────
                     output = io.BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        # Write Orders sheet
-                        orders_df.to_excel(writer, sheet_name='Orders', index=False)
-                        worksheet_orders = writer.sheets['Orders']
+
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                        # 1) Orders sheet  ─ always present
+                        orders_df.to_excel(writer, sheet_name="Orders", index=False)
+                        ws_orders = writer.sheets["Orders"]
                         
                         # Add totals row to Orders
                         total_row = len(orders_df) + 2
@@ -201,9 +202,9 @@ if valid_skus is not None:  # Only show Step 3 if Step 1 is complete
                                 cell = worksheet_orders[f"{col_letter}{row}"]
                                 cell.number_format = currency_format
                         
-                        # Write Storage sheet
-                        filtered_stock.to_excel(writer, sheet_name='Storage', index=False)
-                        worksheet_storage = writer.sheets['Storage']
+                        # 2) Storage sheet  ─ always present
+                        filtered_stock.to_excel(writer, sheet_name="Storage", index=False)
+                         ws_storage = writer.sheets["Storage"]
                         
                         # Add totals row to Storage (only for Cost column)
                         storage_total_row = len(filtered_stock) + 2
@@ -216,10 +217,11 @@ if valid_skus is not None:  # Only show Step 3 if Step 1 is complete
                             cell = worksheet_storage[f"{cost_col}{row}"]
                             cell.number_format = currency_format
                         
-                        # Write Goods In sheet
-                        filtered_goods_in.to_excel(writer, sheet_name='Goods In', index=False)
-                        worksheet_goods_in = writer.sheets['Goods In']
-                        
+                      # 3) Goods In sheet  ─ only if there are rows
+                        if not filtered_goods_in.empty:
+                            filtered_goods_in.to_excel(writer, sheet_name="Goods In", index=False)
+                            ws_goods = writer.sheets["Goods In"]
+                              
                         # Add totals row to Goods In (only for Cost column)
                         goods_in_total_row = len(filtered_goods_in) + 2
                         cost_col = get_column_letter(filtered_goods_in.columns.get_loc('Cost') + 1)
@@ -231,30 +233,29 @@ if valid_skus is not None:  # Only show Step 3 if Step 1 is complete
                             cell = worksheet_goods_in[f"{cost_col}{row}"]
                             cell.number_format = currency_format
                         
-                        # Auto-adjust column widths for all sheets
-                        for worksheet in writer.sheets.values():
-                            for column in worksheet.columns:
-                                max_length = 0
-                                column = [cell for cell in column]
-                                for cell in column:
-                                    try:
-                                        if len(str(cell.value)) > max_length:
-                                            max_length = len(str(cell.value))
-                                    except:
-                                        pass
-                                    adjusted_width = (max_length + 2)
-                                    worksheet.column_dimensions[get_column_letter(column[0].column)].width = adjusted_width
-                    
+                        # 4) Column-width loop covering whatever sheets were created
+                        for ws in writer.sheets.values():
+                            for col in ws.columns:
+                                max_len = max(
+                                    len(str(cell.value)) if cell.value is not None else 0
+                                    for cell in col
+                                )
+                                ws.column_dimensions[col[0].column_letter].width = max_len + 2
+
+                    # ─── Download button ─────────────────────────────────────────────────────────
                     output.seek(0)
                     st.download_button(
                         label="Download Complete Report",
                         data=output,
                         file_name="monthly_costs_report.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
-                else:
-                    st.info("No matching SKUs found in the Goods In file. The Goods In tab will not be included in the output.")
-                
+
+                    # Optional FYI message
+                    if filtered_goods_in.empty:
+                        st.info(
+                            "No matching SKUs found in the Goods In file, so that tab was left out of the report."
+                        )
             except Exception as e:
                 st.error(f"An error occurred in Goods In processing: {str(e)}")
                 st.error("Please check that the file has the expected format and try again.")
