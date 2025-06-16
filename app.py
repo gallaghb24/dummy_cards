@@ -4,8 +4,6 @@ import streamlit as st
 import pandas as pd
 import io
 from openpyxl.utils import get_column_letter
-from openpyxl.styles import numbers
-
 st.set_page_config(page_title="Monthly Costs Processor", layout="wide")
 st.title("Monthly Costs Processor")
 
@@ -15,6 +13,7 @@ if 'storage_processed' not in st.session_state:
 
 orders_df = None
 valid_skus = None
+owner_map = {}
 
 # ── Step 1: Orders Processing ─────────────────────────────────
 st.header("Step 1: Orders Processing")
@@ -121,6 +120,13 @@ if valid_skus is not None:
             ).fillna(0)
 
             filtered_stock['Cost'] = (filtered_stock['Pallets'] * 1.92).round(2)
+
+            # Map owners and add to orders
+            owner_map = filtered_stock.set_index('Stock Code')['Responsible Owner'].to_dict()
+            if orders_df is not None:
+                orders_df['Responsible Owner'] = (
+                    orders_df['Stock Code'].map(owner_map).fillna('Unknown')
+                )
             st.session_state.storage_processed = True
 
         except Exception as e:
@@ -166,55 +172,64 @@ if valid_skus is not None and st.session_state.storage_processed:
                 filtered_goods_in['Cost'] = (
                     filtered_goods_in['No of Containers'] * 5.26
                 ).round(2)
+                filtered_goods_in['Responsible Owner'] = (
+                    filtered_goods_in['Stock Code'].map(owner_map).fillna('Unknown')
+                )
 
             # ── Build Excel workbook – always ───────────────────
+            owners = sorted(filtered_stock['Responsible Owner'].fillna('Unknown').unique())
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Orders sheet
-                orders_df.to_excel(writer, sheet_name='Orders', index=False)
-                ws_orders = writer.sheets['Orders']
-
-                total_row = len(orders_df) + 2
-                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
-                    ws_orders[f"{col_letter}{total_row}"] = \
-                        f"=SUM({col_letter}2:{col_letter}{total_row-1})"
-                ws_orders[f"A{total_row}"] = "Total"
-
                 currency_fmt = '_-£* #,##0.00_-;-£* #,##0.00_-;_-£* "-"??_-;_-@_-'
-                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
-                    for r in range(2, total_row + 1):
-                        ws_orders[f"{col_letter}{r}"].number_format = currency_fmt
 
-                # Storage sheet
-                filtered_stock.to_excel(writer, sheet_name='Storage', index=False)
-                ws_storage = writer.sheets['Storage']
+                for owner in owners:
+                    owner_orders = orders_df[orders_df['Responsible Owner'] == owner]
+                    sheet_name = f"Orders - {owner}"
+                    owner_orders.to_excel(writer, sheet_name=sheet_name, index=False)
+                    ws_orders = writer.sheets[sheet_name]
 
-                st_total_row = len(filtered_stock) + 2
-                st_cost_col = get_column_letter(filtered_stock.columns.get_loc('Cost') + 1)
-                ws_storage[f"{st_cost_col}{st_total_row}"] = \
-                    f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
-                ws_storage[f"A{st_total_row}"] = "Total"
+                    total_row = len(owner_orders) + 2
+                    for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                        col_letter = get_column_letter(owner_orders.columns.get_loc(col) + 1)
+                        ws_orders[f"{col_letter}{total_row}"] = \
+                            f"=SUM({col_letter}2:{col_letter}{total_row-1})"
+                    ws_orders[f"A{total_row}"] = "Total"
 
-                for r in range(2, st_total_row + 1):
-                    ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
+                    for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                        col_letter = get_column_letter(owner_orders.columns.get_loc(col) + 1)
+                        for r in range(2, total_row + 1):
+                            ws_orders[f"{col_letter}{r}"].number_format = currency_fmt
 
-                # Goods-In sheet (only if data)
-                if not filtered_goods_in.empty:
-                    filtered_goods_in.to_excel(writer, sheet_name='Goods In', index=False)
-                    ws_gi = writer.sheets['Goods In']
+                    owner_storage = filtered_stock[filtered_stock['Responsible Owner'] == owner]
+                    sheet_name_st = f"Storage - {owner}"
+                    owner_storage.to_excel(writer, sheet_name=sheet_name_st, index=False)
+                    ws_storage = writer.sheets[sheet_name_st]
 
-                    gi_total_row = len(filtered_goods_in) + 2
-                    gi_cost_col = get_column_letter(
-                        filtered_goods_in.columns.get_loc('Cost') + 1
-                    )
-                    ws_gi[f"{gi_cost_col}{gi_total_row}"] = \
-                        f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
-                    ws_gi[f"A{gi_total_row}"] = "Total"
+                    st_total_row = len(owner_storage) + 2
+                    st_cost_col = get_column_letter(owner_storage.columns.get_loc('Cost') + 1)
+                    ws_storage[f"{st_cost_col}{st_total_row}"] = \
+                        f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
+                    ws_storage[f"A{st_total_row}"] = "Total"
 
-                    for r in range(2, gi_total_row + 1):
-                        ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
+                    for r in range(2, st_total_row + 1):
+                        ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
+
+                    owner_goods_in = filtered_goods_in[filtered_goods_in['Responsible Owner'] == owner]
+                    if not owner_goods_in.empty:
+                        sheet_name_gi = f"Goods In - {owner}"
+                        owner_goods_in.to_excel(writer, sheet_name=sheet_name_gi, index=False)
+                        ws_gi = writer.sheets[sheet_name_gi]
+
+                        gi_total_row = len(owner_goods_in) + 2
+                        gi_cost_col = get_column_letter(
+                            owner_goods_in.columns.get_loc('Cost') + 1
+                        )
+                        ws_gi[f"{gi_cost_col}{gi_total_row}"] = \
+                            f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
+                        ws_gi[f"A{gi_total_row}"] = "Total"
+
+                        for r in range(2, gi_total_row + 1):
+                            ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
 
                 # Auto-size columns on all sheets
                 for ws in writer.sheets.values():
