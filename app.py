@@ -162,19 +162,19 @@ if valid_skus is not None and st.session_state.storage_processed:
                 goods_in_df[part_no_col].isin(valid_skus)
             ].copy()
 
-            if not filtered_goods_in.empty:
-                filtered_goods_in = filtered_goods_in[
-                    [part_no_col, 'Part Description', 'Qty', 'No Of Containers']
-                ]
-                filtered_goods_in.columns = [
-                    'Stock Code', 'Part Description', 'Qty', 'No of Containers'
-                ]
-                filtered_goods_in['Cost'] = (
-                    filtered_goods_in['No of Containers'] * 5.26
-                ).round(2)
-                filtered_goods_in['Responsible Owner'] = (
-                    filtered_goods_in['Stock Code'].map(owner_map).fillna('Unknown')
-                )
+            # Keep expected columns even if no rows match
+            filtered_goods_in = filtered_goods_in[
+                [part_no_col, 'Part Description', 'Qty', 'No Of Containers']
+            ]
+            filtered_goods_in.columns = [
+                'Stock Code', 'Part Description', 'Qty', 'No of Containers'
+            ]
+            filtered_goods_in['Cost'] = (
+                filtered_goods_in['No of Containers'] * 5.26
+            ).round(2)
+            filtered_goods_in['Responsible Owner'] = (
+                filtered_goods_in['Stock Code'].map(owner_map).fillna('Unknown')
+            )
 
             # ── Build Excel workbook – always ───────────────────
             owners = sorted(filtered_stock['Responsible Owner'].fillna('Unknown').unique())
