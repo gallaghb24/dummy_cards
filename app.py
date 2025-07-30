@@ -131,10 +131,31 @@ if valid_skus is not None:
 
             # Map owners and add to orders
             owner_map = filtered_stock.set_index('Stock Code')['Responsible Owner'].to_dict()
+            desc_col = next(
+                (c for c in filtered_stock.columns
+                 if c.strip().lower() == 'full description'),
+                None
+            )
+            desc_map = (
+                filtered_stock.set_index('Stock Code')[desc_col].to_dict()
+                if desc_col
+                else {}
+            )
             if orders_df is not None:
                 orders_df['Responsible Owner'] = (
                     orders_df['Stock Code'].map(owner_map).fillna('Unknown')
                 )
+                if desc_col:
+                    insert_idx = (
+                        orders_df.columns.get_loc('Stock Title') + 1
+                        if 'Stock Title' in orders_df.columns
+                        else len(orders_df.columns)
+                    )
+                    orders_df.insert(
+                        insert_idx,
+                        'Full Description',
+                        orders_df['Stock Code'].map(desc_map)
+                    )
             st.session_state.storage_processed = True
 
         except Exception as e:
