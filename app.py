@@ -10,14 +10,18 @@ st.title("Monthly Costs Processor")
 # ── Session state ──────────────────────────────────────────────
 if 'storage_processed' not in st.session_state:
     st.session_state.storage_processed = False
-
-orders_df = None
-valid_skus = None
-owner_map = {}
+if 'monthly_df' not in st.session_state:
+    st.session_state.monthly_df = None
+if 'orders_df' not in st.session_state:
+    st.session_state.orders_df = None
+if 'valid_skus' not in st.session_state:
+    st.session_state.valid_skus = None
+if 'owner_map' not in st.session_state:
+    st.session_state.owner_map = {}
 
 # ── Step 1: Orders Processing ─────────────────────────────────
 st.header("Step 1: Orders Processing")
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     month_year = st.text_input(
@@ -29,16 +33,8 @@ with col2:
         "Upload Order Line Level Data",
         type=['xlsx'],
     )
-with col3:
-    sku_file = st.file_uploader("Upload SKU List File", type=['xlsx'])
-
-if monthly_file and sku_file:
+if monthly_file:
     try:
-        # Read SKU list
-        sku_df = pd.read_excel(sku_file, usecols=[0])
-        valid_skus = set(sku_df.iloc[:, 0].astype(str).str.strip().str.upper())
-
-        # Read Order file (header row = row 2)
         xl = pd.ExcelFile(monthly_file)
         monthly_df = pd.read_excel(monthly_file, sheet_name=xl.sheet_names[0], header=1)
 
@@ -61,49 +57,15 @@ if monthly_file and sku_file:
               .fillna(0)
         )
 
-        filtered_df = monthly_df[monthly_df['Stock Code'].isin(valid_skus)]
-
-        columns_to_remove = [
-            'Sell Price', 'Line Status', 'Back Order Status',
-            'Back Order Placed Date', 'Sell Price (Packs)'
-        ]
-        filtered_df = filtered_df.drop(
-            columns=[c for c in columns_to_remove if c in filtered_df.columns]
-        )
-
-        # Charges
-        filtered_df['Pick Charge'] = filtered_df['Total Locations'] * 1.59
-
-        filtered_df['Order_Count'] = (
-            filtered_df.groupby('Order Number').cumcount() + 1
-        )
-        filtered_df['Packaging'] = (
-            (filtered_df['Order_Count'] % 10 == 1).astype(int)
-              * filtered_df['Total Locations']
-        )
-        filtered_df = filtered_df.drop('Order_Count', axis=1)
-
-        filtered_df['Packaging Charge'] = filtered_df['Packaging'] * 0.97
-        filtered_df['Label Charge'] = filtered_df['Packaging'] * 0.39
-
-        for c in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-            filtered_df[c] = filtered_df[c].round(2)
-
-        orders_df = filtered_df
-
-        # Display metrics
-        st.header("Orders Processing Results")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Orders", len(monthly_df))
-        c2.metric("Valid Orders", len(filtered_df))
-        c3.metric("Removed Orders", len(monthly_df) - len(filtered_df))
+        st.session_state.monthly_df = monthly_df
+        st.success("Orders file loaded. Continue to Step 2 to process.")
 
     except Exception as e:
         st.error(f"An error occurred in Orders processing: {e}")
         st.error("Please check that the files have the expected format and try again.")
 
 # ── Step 2: Storage Processing ────────────────────────────────
-if valid_skus is not None:
+if st.session_state.monthly_df is not None:
     st.header("Step 2: Storage Processing")
     col1, col2 = st.columns(2)
 
@@ -120,6 +82,12 @@ if valid_skus is not None:
             stock_df['Stock Code'] = (
                 stock_df['Stock Code'].astype(str).str.strip().str.upper()
             )
+            stock_df['Event'] = stock_df['Event'].astype(str).str.strip()
+            valid_skus = set(
+                stock_df.loc[stock_df['Event'] == 'Dummy Cards & Boxes', 'Stock Code']
+            )
+            st.session_state.valid_skus = valid_skus
+
             filtered_stock = stock_df[stock_df['Stock Code'].isin(valid_skus)].copy()
 
             filtered_stock['Pallets'] = filtered_stock['Stock Code'].map(
@@ -129,8 +97,38 @@ if valid_skus is not None:
 
             filtered_stock['Cost'] = (filtered_stock['Pallets'] * 1.92).round(2)
 
+            monthly_df = st.session_state.monthly_df
+            orders_df = monthly_df[monthly_df['Stock Code'].isin(valid_skus)].copy()
+
+            columns_to_remove = [
+                'Sell Price', 'Line Status', 'Back Order Status',
+                'Back Order Placed Date', 'Sell Price (Packs)'
+            ]
+            orders_df = orders_df.drop(
+                columns=[c for c in columns_to_remove if c in orders_df.columns]
+            )
+
+            # Charges
+            orders_df['Pick Charge'] = orders_df['Total Locations'] * 1.59
+
+            orders_df['Order_Count'] = (
+                orders_df.groupby('Order Number').cumcount() + 1
+            )
+            orders_df['Packaging'] = (
+                (orders_df['Order_Count'] % 10 == 1).astype(int)
+                  * orders_df['Total Locations']
+            )
+            orders_df = orders_df.drop('Order_Count', axis=1)
+
+            orders_df['Packaging Charge'] = orders_df['Packaging'] * 0.97
+            orders_df['Label Charge'] = orders_df['Packaging'] * 0.39
+
+            for c in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                orders_df[c] = orders_df[c].round(2)
+
             # Map owners and add to orders
             owner_map = filtered_stock.set_index('Stock Code')['Responsible Owner'].to_dict()
+            st.session_state.owner_map = owner_map
             desc_col = next(
                 (c for c in filtered_stock.columns
                  if c.strip().lower() == 'full description'),
@@ -141,21 +139,28 @@ if valid_skus is not None:
                 if desc_col
                 else {}
             )
-            if orders_df is not None:
-                orders_df['Responsible Owner'] = (
-                    orders_df['Stock Code'].map(owner_map).fillna('Unknown')
+            orders_df['Responsible Owner'] = (
+                orders_df['Stock Code'].map(owner_map).fillna('Unknown')
+            )
+            if desc_col:
+                insert_idx = (
+                    orders_df.columns.get_loc('Stock Title') + 1
+                    if 'Stock Title' in orders_df.columns
+                    else len(orders_df.columns)
                 )
-                if desc_col:
-                    insert_idx = (
-                        orders_df.columns.get_loc('Stock Title') + 1
-                        if 'Stock Title' in orders_df.columns
-                        else len(orders_df.columns)
-                    )
-                    orders_df.insert(
-                        insert_idx,
-                        'Full Description',
-                        orders_df['Stock Code'].map(desc_map)
-                    )
+                orders_df.insert(
+                    insert_idx,
+                    'Full Description',
+                    orders_df['Stock Code'].map(desc_map)
+                )
+
+            st.header("Orders Processing Results")
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Total Orders", len(monthly_df))
+            c2.metric("Valid Orders", len(orders_df))
+            c3.metric("Removed Orders", len(monthly_df) - len(orders_df))
+
+            st.session_state.orders_df = orders_df
             st.session_state.storage_processed = True
 
         except Exception as e:
@@ -166,7 +171,7 @@ else:
     st.info("Please complete Step 1 (Orders Processing) before proceeding to Step 2.")
 
 # ── Step 3: Goods-In Processing & Report Download ─────────────
-if valid_skus is not None and st.session_state.storage_processed:
+if st.session_state.valid_skus is not None and st.session_state.storage_processed:
     st.header("Step 3: Goods In Processing")
     goods_in_file = st.file_uploader("Upload Goods In File", type=['xlsx'])
 
@@ -188,7 +193,7 @@ if valid_skus is not None and st.session_state.storage_processed:
                 goods_in_df[part_no_col].astype(str).str.strip().str.upper()
             )
             filtered_goods_in = goods_in_df[
-                goods_in_df[part_no_col].isin(valid_skus)
+                goods_in_df[part_no_col].isin(st.session_state.valid_skus)
             ].copy()
 
             # Keep expected columns even if no rows match
@@ -202,7 +207,9 @@ if valid_skus is not None and st.session_state.storage_processed:
                 filtered_goods_in['No of Containers'] * 5.26
             ).round(2)
             filtered_goods_in['Responsible Owner'] = (
-                filtered_goods_in['Stock Code'].map(owner_map).fillna('Unknown')
+                filtered_goods_in['Stock Code']
+                    .map(st.session_state.owner_map)
+                    .fillna('Unknown')
             )
 
             # ── Build Excel workbooks per owner ─────────────────
@@ -311,5 +318,5 @@ if valid_skus is not None and st.session_state.storage_processed:
             st.error(f"An error occurred in Goods In processing: {e}")
             st.error("Please check that the file has the expected format and try again.")
 else:
-    if valid_skus is not None:
+    if st.session_state.valid_skus is not None:
         st.info("Please complete Step 2 (Storage Processing) before proceeding to Step 3.")
