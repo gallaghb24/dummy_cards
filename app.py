@@ -5,6 +5,27 @@ import pandas as pd
 import io
 import zipfile
 from openpyxl.utils import get_column_letter
+
+
+def normalize_event_name(name: str) -> str:
+    """Normalize event names for consistent matching.
+
+    Converts curly quotes to straight quotes, standardizes whitespace, and
+    uppercases the value so it can be compared against accepted event names.
+    """
+    if pd.isna(name):
+        return ''
+
+    translation_table = str.maketrans({
+        '’': "'",
+        '‘': "'",
+        '“': '"',
+        '”': '"',
+    })
+
+    normalized = str(name).translate(translation_table).strip()
+    normalized = ' '.join(normalized.split())
+    return normalized.upper()
 st.set_page_config(page_title="Monthly Costs Processor", layout="wide")
 st.title("Monthly Costs Processor")
 
@@ -83,7 +104,7 @@ if st.session_state.monthly_df is not None:
             stock_df['Stock Code'] = (
                 stock_df['Stock Code'].astype(str).str.strip().str.upper()
             )
-            stock_df['Event'] = stock_df['Event'].astype(str).str.strip()
+            stock_df['Event'] = stock_df['Event'].apply(normalize_event_name)
 
             accepted_events = {
                 'QUIT SMOKING DUMMY CARDS',
@@ -91,9 +112,10 @@ if st.session_state.monthly_df is not None:
                 'ORAL CARE DUMMY CARDS',
                 'FEMALE SHAVE DUMMY CARDS',
             }
+            normalized_events = {normalize_event_name(evt) for evt in accepted_events}
             valid_skus = set(
                 stock_df.loc[
-                    stock_df['Event'].str.upper().isin(accepted_events),
+                    stock_df['Event'].isin(normalized_events),
                     'Stock Code'
                 ]
             )
