@@ -190,15 +190,33 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
         try:
             goods_in_df = pd.read_excel(goods_in_file, header=0)
 
+            def normalize_col_name(col):
+                return ''.join(ch.lower() for ch in str(col) if ch.isalnum())
+
+            normalized_columns = {
+                normalize_col_name(c): c for c in goods_in_df.columns
+            }
+
             # Identify part-number column
-            part_no_col = next(
-                (c for c in goods_in_df.columns
-                 if str(c).lower().replace(' ', '') == 'partno'),
-                None
-            )
+            part_aliases = ['partnumber', 'partno', 'partnum']
+            part_no_key = next((a for a in part_aliases if a in normalized_columns), None)
+            part_no_col = normalized_columns.get(part_no_key) if part_no_key else None
             if part_no_col is None:
                 st.error("Could not find the part-number column in the Goods In file.")
                 st.stop()
+
+            required_column_map = {
+                'partdescription': 'Part Description',
+                'qty': 'Qty',
+                'noofcontainers': 'No of Containers',
+            }
+
+            resolved_columns = {}
+            for norm_key, output_name in required_column_map.items():
+                if norm_key not in normalized_columns:
+                    st.error(f"Could not find the '{output_name}' column in the Goods In file.")
+                    st.stop()
+                resolved_columns[output_name] = normalized_columns[norm_key]
 
             goods_in_df[part_no_col] = (
                 goods_in_df[part_no_col].astype(str).str.strip().str.upper()
@@ -209,7 +227,12 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
 
             # Keep expected columns even if no rows match
             filtered_goods_in = filtered_goods_in[
-                [part_no_col, 'Part Description', 'Qty', 'No Of Containers']
+                [
+                    part_no_col,
+                    resolved_columns['Part Description'],
+                    resolved_columns['Qty'],
+                    resolved_columns['No of Containers'],
+                ]
             ]
             filtered_goods_in.columns = [
                 'Stock Code', 'Part Description', 'Qty', 'No of Containers'
