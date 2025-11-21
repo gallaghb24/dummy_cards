@@ -83,8 +83,18 @@ if st.session_state.monthly_df is not None:
                 stock_df['Stock Code'].astype(str).str.strip().str.upper()
             )
             stock_df['Event'] = stock_df['Event'].astype(str).str.strip()
+
+            accepted_events = {
+                'QUIT SMOKING DUMMY CARDS',
+                "MEN'S SHAVE DUMMY CARDS",
+                'ORAL CARE DUMMY CARDS',
+                'FEMALE SHAVE DUMMY CARDS',
+            }
             valid_skus = set(
-                stock_df.loc[stock_df['Event'] == 'Dummy Cards & Boxes', 'Stock Code']
+                stock_df.loc[
+                    stock_df['Event'].str.upper().isin(accepted_events),
+                    'Stock Code'
+                ]
             )
             st.session_state.valid_skus = valid_skus
 
