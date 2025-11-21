@@ -188,7 +188,16 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
 
     if goods_in_file:
         try:
-            goods_in_df = pd.read_excel(goods_in_file, header=0)
+            goods_in_raw = pd.read_excel(goods_in_file, header=None)
+
+            header_mask = goods_in_raw.notna().any(axis=1)
+            if not header_mask.any():
+                st.error("Could not detect a header row in the Goods In file.")
+                st.stop()
+
+            header_idx = header_mask.idxmax()
+            goods_in_df = goods_in_raw.loc[header_idx + 1:].copy()
+            goods_in_df.columns = goods_in_raw.loc[header_idx]
 
             def normalize_col_name(col):
                 return ''.join(ch.lower() for ch in str(col) if ch.isalnum())
