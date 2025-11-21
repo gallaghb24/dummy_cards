@@ -198,8 +198,16 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
             }
 
             # Identify part-number column
-            part_aliases = ['partnumber', 'partno', 'partnum']
-            part_no_key = next((a for a in part_aliases if a in normalized_columns), None)
+            def is_part_number_key(key):
+                has_part_no_prefix = key.startswith('partno')
+                has_part_token = 'part' in key
+                has_number_token = any(token in key for token in ['no', 'num', 'number'])
+                return has_part_no_prefix or (has_part_token and has_number_token)
+
+            part_no_key = next(
+                (k for k in normalized_columns if is_part_number_key(k)),
+                None,
+            )
             part_no_col = normalized_columns.get(part_no_key) if part_no_key else None
             if part_no_col is None:
                 st.error("Could not find the part-number column in the Goods In file.")
