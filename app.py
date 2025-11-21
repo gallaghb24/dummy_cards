@@ -99,6 +99,7 @@ if st.session_state.monthly_df is not None:
             st.session_state.valid_skus = valid_skus
 
             filtered_stock = stock_df[stock_df['Stock Code'].isin(valid_skus)].copy()
+            st.session_state.filtered_stock = filtered_stock
 
             filtered_stock['Pallets'] = filtered_stock['Stock Code'].map(
                 storage_df.set_index('Part Number')['Period']
@@ -222,100 +223,95 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
                     .fillna('Unknown')
             )
 
-            # ── Build Excel workbooks per owner ─────────────────
-            owners = sorted(
-                filtered_stock['Responsible Owner'].fillna('Unknown').unique()
-            )
+            # ── Build a single combined Excel workbook ───────────
+            orders_df = st.session_state.orders_df
+            filtered_stock = st.session_state.filtered_stock
             currency_fmt = '_-£* #,##0.00_-;-£* #,##0.00_-;_-£* "-"??_-;_-@_-'
-            outputs = []
 
-            for owner in owners:
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    owner_orders = orders_df[orders_df['Responsible Owner'] == owner]
-                    owner_orders.to_excel(writer, sheet_name='Orders', index=False)
-                    ws_orders = writer.sheets['Orders']
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # Orders tab
+                orders_df.to_excel(writer, sheet_name='Orders', index=False)
+                ws_orders = writer.sheets['Orders']
 
-                    total_row = len(owner_orders) + 2
-                    for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                        col_letter = get_column_letter(owner_orders.columns.get_loc(col) + 1)
-                        ws_orders[f"{col_letter}{total_row}"] = f"=SUM({col_letter}2:{col_letter}{total_row-1})"
-                    ws_orders[f"A{total_row}"] = 'Total'
+                total_row = len(orders_df) + 2
+                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
+                    ws_orders[f"{col_letter}{total_row}"] = f"=SUM({col_letter}2:{col_letter}{total_row-1})"
+                ws_orders[f"A{total_row}"] = 'Total'
 
-                    for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                        col_letter = get_column_letter(owner_orders.columns.get_loc(col) + 1)
-                        for r in range(2, total_row + 1):
-                            ws_orders[f"{col_letter}{r}"].number_format = currency_fmt
+                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
+                    for r in range(2, total_row + 1):
+                        ws_orders[f"{col_letter}{r}"].number_format = currency_fmt
 
-                    owner_storage = filtered_stock[filtered_stock['Responsible Owner'] == owner]
-                    owner_storage.to_excel(writer, sheet_name='Storage', index=False)
-                    ws_storage = writer.sheets['Storage']
+                # Storage tab
+                filtered_stock.to_excel(writer, sheet_name='Storage', index=False)
+                ws_storage = writer.sheets['Storage']
 
-                    st_total_row = len(owner_storage) + 2
-                    st_cost_col = get_column_letter(owner_storage.columns.get_loc('Cost') + 1)
-                    ws_storage[f"{st_cost_col}{st_total_row}"] = f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
-                    ws_storage[f"A{st_total_row}"] = 'Total'
+                st_total_row = len(filtered_stock) + 2
+                st_cost_col = get_column_letter(filtered_stock.columns.get_loc('Cost') + 1)
+                ws_storage[f"{st_cost_col}{st_total_row}"] = f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
+                ws_storage[f"A{st_total_row}"] = 'Total'
 
-                    for r in range(2, st_total_row + 1):
-                        ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
+                for r in range(2, st_total_row + 1):
+                    ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
 
-                    owner_goods_in = filtered_goods_in[filtered_goods_in['Responsible Owner'] == owner]
-                    if not owner_goods_in.empty:
-                        owner_goods_in.to_excel(writer, sheet_name='Goods In', index=False)
-                        ws_gi = writer.sheets['Goods In']
+                # Goods In tab (if any)
+                if not filtered_goods_in.empty:
+                    filtered_goods_in.to_excel(writer, sheet_name='Goods In', index=False)
+                    ws_gi = writer.sheets['Goods In']
 
-                        gi_total_row = len(owner_goods_in) + 2
-                        gi_cost_col = get_column_letter(owner_goods_in.columns.get_loc('Cost') + 1)
-                        ws_gi[f"{gi_cost_col}{gi_total_row}"] = f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
-                        ws_gi[f"A{gi_total_row}"] = 'Total'
+                    gi_total_row = len(filtered_goods_in) + 2
+                    gi_cost_col = get_column_letter(filtered_goods_in.columns.get_loc('Cost') + 1)
+                    ws_gi[f"{gi_cost_col}{gi_total_row}"] = f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
+                    ws_gi[f"A{gi_total_row}"] = 'Total'
 
-                        for r in range(2, gi_total_row + 1):
-                            ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
+                    for r in range(2, gi_total_row + 1):
+                        ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
 
-                    summary_rows = [
-                        {
-                            'Month': month_year,
-                            'Tab Name': 'Orders',
-                            'Total Cost': owner_orders[['Pick Charge', 'Packaging Charge', 'Label Charge']].sum().sum(),
-                        },
-                        {
-                            'Month': month_year,
-                            'Tab Name': 'Storage',
-                            'Total Cost': owner_storage['Cost'].sum(),
-                        },
-                    ]
-                    if not owner_goods_in.empty:
-                        summary_rows.append(
-                            {
-                                'Month': month_year,
-                                'Tab Name': 'Goods In',
-                                'Total Cost': owner_goods_in['Cost'].sum(),
-                            }
-                        )
-                    summary_df = pd.DataFrame(summary_rows)
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                    ws_summary = writer.sheets['Summary']
-                    for r in range(2, len(summary_df) + 2):
-                        ws_summary[f"C{r}"].number_format = currency_fmt
-
-                    for ws in writer.sheets.values():
-                        for col_cells in ws.columns:
-                            max_len = max(
-                                len(str(cell.value)) if cell.value else 0
-                                for cell in col_cells
-                            )
-                            ws.column_dimensions[get_column_letter(col_cells[0].column)].width = max_len + 2
-
-                output.seek(0)
-                outputs.append((owner, output))
-
-            for owner, data_out in outputs:
-                st.download_button(
-                    label=f"Download Report for {owner}",
-                    data=data_out,
-                    file_name=f"Dummy_Products_{month_year}_{owner}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                # Summary tab
+                summary_rows = [
+                    {
+                        'Month': month_year,
+                        'Tab Name': 'Orders',
+                        'Total Cost': orders_df[['Pick Charge', 'Packaging Charge', 'Label Charge']].sum().sum(),
+                    },
+                    {
+                        'Month': month_year,
+                        'Tab Name': 'Storage',
+                        'Total Cost': filtered_stock['Cost'].sum(),
+                    },
+                ]
+                summary_rows.append(
+                    {
+                        'Month': month_year,
+                        'Tab Name': 'Goods In',
+                        'Total Cost': filtered_goods_in['Cost'].sum(),
+                    }
                 )
+                summary_df = pd.DataFrame(summary_rows)
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                ws_summary = writer.sheets['Summary']
+                for r in range(2, len(summary_df) + 2):
+                    ws_summary[f"C{r}"].number_format = currency_fmt
+
+                for ws in writer.sheets.values():
+                    for col_cells in ws.columns:
+                        max_len = max(
+                            len(str(cell.value)) if cell.value else 0
+                            for cell in col_cells
+                        )
+                        ws.column_dimensions[get_column_letter(col_cells[0].column)].width = max_len + 2
+
+            output.seek(0)
+
+            st.download_button(
+                label="Download Combined Report",
+                data=output,
+                file_name=f"Dummy_Products_{month_year}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
             # Info if Goods In tab absent
             if filtered_goods_in.empty:
