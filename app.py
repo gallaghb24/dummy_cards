@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import zipfile
 from openpyxl.utils import get_column_letter
 st.set_page_config(page_title="Monthly Costs Processor", layout="wide")
 st.title("Monthly Costs Processor")
@@ -285,80 +286,14 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
                     .fillna('Unknown')
             )
 
-            # ── Build a single combined Excel workbook ───────────
-            orders_df = st.session_state.orders_df
-            filtered_stock = st.session_state.filtered_stock
-            currency_fmt = '_-£* #,##0.00_-;-£* #,##0.00_-;_-£* "-"??_-;_-@_-'
+            def format_currency(ws, column_name, df, total_row):
+                col_letter = get_column_letter(df.columns.get_loc(column_name) + 1)
+                for r in range(2, total_row + 1):
+                    ws[f"{col_letter}{r}"].number_format = currency_fmt
+                return col_letter
 
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # Orders tab
-                orders_df.to_excel(writer, sheet_name='Orders', index=False)
-                ws_orders = writer.sheets['Orders']
-
-                total_row = len(orders_df) + 2
-                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
-                    ws_orders[f"{col_letter}{total_row}"] = f"=SUM({col_letter}2:{col_letter}{total_row-1})"
-                ws_orders[f"A{total_row}"] = 'Total'
-
-                for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
-                    col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
-                    for r in range(2, total_row + 1):
-                        ws_orders[f"{col_letter}{r}"].number_format = currency_fmt
-
-                # Storage tab
-                filtered_stock.to_excel(writer, sheet_name='Storage', index=False)
-                ws_storage = writer.sheets['Storage']
-
-                st_total_row = len(filtered_stock) + 2
-                st_cost_col = get_column_letter(filtered_stock.columns.get_loc('Cost') + 1)
-                ws_storage[f"{st_cost_col}{st_total_row}"] = f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
-                ws_storage[f"A{st_total_row}"] = 'Total'
-
-                for r in range(2, st_total_row + 1):
-                    ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
-
-                # Goods In tab (if any)
-                if not filtered_goods_in.empty:
-                    filtered_goods_in.to_excel(writer, sheet_name='Goods In', index=False)
-                    ws_gi = writer.sheets['Goods In']
-
-                    gi_total_row = len(filtered_goods_in) + 2
-                    gi_cost_col = get_column_letter(filtered_goods_in.columns.get_loc('Cost') + 1)
-                    ws_gi[f"{gi_cost_col}{gi_total_row}"] = f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
-                    ws_gi[f"A{gi_total_row}"] = 'Total'
-
-                    for r in range(2, gi_total_row + 1):
-                        ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
-
-                # Summary tab
-                summary_rows = [
-                    {
-                        'Month': month_year,
-                        'Tab Name': 'Orders',
-                        'Total Cost': orders_df[['Pick Charge', 'Packaging Charge', 'Label Charge']].sum().sum(),
-                    },
-                    {
-                        'Month': month_year,
-                        'Tab Name': 'Storage',
-                        'Total Cost': filtered_stock['Cost'].sum(),
-                    },
-                ]
-                summary_rows.append(
-                    {
-                        'Month': month_year,
-                        'Tab Name': 'Goods In',
-                        'Total Cost': filtered_goods_in['Cost'].sum(),
-                    }
-                )
-                summary_df = pd.DataFrame(summary_rows)
-                summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                ws_summary = writer.sheets['Summary']
-                for r in range(2, len(summary_df) + 2):
-                    ws_summary[f"C{r}"].number_format = currency_fmt
-
-                for ws in writer.sheets.values():
+            def autosize_columns(workbook):
+                for ws in workbook.worksheets:
                     for col_cells in ws.columns:
                         max_len = max(
                             len(str(cell.value)) if cell.value else 0
@@ -366,13 +301,104 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
                         )
                         ws.column_dimensions[get_column_letter(col_cells[0].column)].width = max_len + 2
 
-            output.seek(0)
+            def build_workbook(orders_df, storage_df, goods_df, event_name):
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    summary_rows = [
+                        {
+                            'Month': month_year,
+                            'Tab Name': 'Orders',
+                            'Total Cost': orders_df[['Pick Charge', 'Packaging Charge', 'Label Charge']].sum().sum(),
+                        },
+                        {
+                            'Month': month_year,
+                            'Tab Name': 'Storage',
+                            'Total Cost': storage_df['Cost'].sum(),
+                        },
+                        {
+                            'Month': month_year,
+                            'Tab Name': 'Goods In',
+                            'Total Cost': goods_df['Cost'].sum(),
+                        },
+                    ]
+                    summary_df = pd.DataFrame(summary_rows)
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                    ws_summary = writer.sheets['Summary']
+                    for r in range(2, len(summary_df) + 2):
+                        ws_summary[f"C{r}"].number_format = currency_fmt
+
+                    # Orders tab
+                    orders_df.to_excel(writer, sheet_name='Orders', index=False)
+                    ws_orders = writer.sheets['Orders']
+                    total_row = len(orders_df) + 2
+                    for col in ['Pick Charge', 'Packaging Charge', 'Label Charge']:
+                        col_letter = get_column_letter(orders_df.columns.get_loc(col) + 1)
+                        ws_orders[f"{col_letter}{total_row}"] = f"=SUM({col_letter}2:{col_letter}{total_row-1})"
+                        format_currency(ws_orders, col, orders_df, total_row)
+                    ws_orders[f"A{total_row}"] = 'Total'
+
+                    # Storage tab
+                    storage_df.to_excel(writer, sheet_name='Storage', index=False)
+                    ws_storage = writer.sheets['Storage']
+                    st_total_row = len(storage_df) + 2
+                    st_cost_col = get_column_letter(storage_df.columns.get_loc('Cost') + 1)
+                    ws_storage[f"{st_cost_col}{st_total_row}"] = f"=SUM({st_cost_col}2:{st_cost_col}{st_total_row-1})"
+                    ws_storage[f"A{st_total_row}"] = 'Total'
+                    for r in range(2, st_total_row + 1):
+                        ws_storage[f"{st_cost_col}{r}"].number_format = currency_fmt
+
+                    # Goods In tab (if any)
+                    if not goods_df.empty:
+                        goods_df.to_excel(writer, sheet_name='Goods In', index=False)
+                        ws_gi = writer.sheets['Goods In']
+                        gi_total_row = len(goods_df) + 2
+                        gi_cost_col = get_column_letter(goods_df.columns.get_loc('Cost') + 1)
+                        ws_gi[f"{gi_cost_col}{gi_total_row}"] = f"=SUM({gi_cost_col}2:{gi_cost_col}{gi_total_row-1})"
+                        ws_gi[f"A{gi_total_row}"] = 'Total'
+                        for r in range(2, gi_total_row + 1):
+                            ws_gi[f"{gi_cost_col}{r}"].number_format = currency_fmt
+
+                    autosize_columns(writer.book)
+
+                output.seek(0)
+                return output.getvalue()
+
+            # ── Build a workbook per event and zip them ─────────
+            orders_df = st.session_state.orders_df
+            filtered_stock = st.session_state.filtered_stock
+            currency_fmt = '_-£* #,##0.00_-;-£* #,##0.00_-;_-£* "-"??_-;_-@_-'
+
+            event_files = []
+            for event_name in sorted(filtered_stock['Event'].dropna().unique()):
+                event_skus = set(
+                    filtered_stock.loc[
+                        filtered_stock['Event'] == event_name, 'Stock Code'
+                    ]
+                )
+                event_orders = orders_df[orders_df['Stock Code'].isin(event_skus)]
+                event_storage = filtered_stock[filtered_stock['Event'] == event_name]
+                event_goods_in = filtered_goods_in[
+                    filtered_goods_in['Stock Code'].isin(event_skus)
+                ]
+
+                workbook_bytes = build_workbook(
+                    event_orders, event_storage, event_goods_in, event_name
+                )
+                safe_event = event_name.replace(' ', '_') or 'Event'
+                filename = f"Dummy_Products_{safe_event}_{month_year}.xlsx"
+                event_files.append((filename, workbook_bytes))
+
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for fname, data in event_files:
+                    zf.writestr(fname, data)
+            zip_buffer.seek(0)
 
             st.download_button(
-                label="Download Combined Report",
-                data=output,
-                file_name=f"Dummy_Products_{month_year}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                label="Download Event Reports (ZIP)",
+                data=zip_buffer,
+                file_name=f"Dummy_Products_{month_year}_events.zip",
+                mime="application/zip",
             )
 
             # Info if Goods In tab absent
