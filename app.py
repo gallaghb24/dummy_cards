@@ -207,7 +207,6 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
 
             required_column_map = {
                 'partdescription': 'Part Description',
-                'qty': 'Qty',
                 'noofcontainers': 'No of Containers',
             }
 
@@ -218,6 +217,13 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
                     st.stop()
                 resolved_columns[output_name] = normalized_columns[norm_key]
 
+            qty_col = (
+                normalized_columns.get('qty')
+                if 'qty' in normalized_columns
+                else resolved_columns['No of Containers']
+            )
+            qty_from_containers = qty_col == resolved_columns['No of Containers']
+
             goods_in_df[part_no_col] = (
                 goods_in_df[part_no_col].astype(str).str.strip().str.upper()
             )
@@ -226,16 +232,32 @@ if st.session_state.valid_skus is not None and st.session_state.storage_processe
             ].copy()
 
             # Keep expected columns even if no rows match
+            selected_columns = []
+            for col in [
+                part_no_col,
+                resolved_columns['Part Description'],
+                qty_col if not qty_from_containers else None,
+                resolved_columns['No of Containers'],
+            ]:
+                if col and col not in selected_columns:
+                    selected_columns.append(col)
+
+            filtered_goods_in = filtered_goods_in[selected_columns]
+
+            rename_map = {
+                part_no_col: 'Stock Code',
+                resolved_columns['Part Description']: 'Part Description',
+                resolved_columns['No of Containers']: 'No of Containers',
+            }
+            if not qty_from_containers:
+                rename_map[qty_col] = 'Qty'
+
+            filtered_goods_in = filtered_goods_in.rename(columns=rename_map)
+            if qty_from_containers:
+                filtered_goods_in['Qty'] = filtered_goods_in['No of Containers']
+
             filtered_goods_in = filtered_goods_in[
-                [
-                    part_no_col,
-                    resolved_columns['Part Description'],
-                    resolved_columns['Qty'],
-                    resolved_columns['No of Containers'],
-                ]
-            ]
-            filtered_goods_in.columns = [
-                'Stock Code', 'Part Description', 'Qty', 'No of Containers'
+                ['Stock Code', 'Part Description', 'Qty', 'No of Containers']
             ]
             filtered_goods_in['Cost'] = (
                 filtered_goods_in['No of Containers'] * 5.26
